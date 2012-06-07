@@ -21,8 +21,12 @@ __meteor_bootstrap__.app
   .use(connect.query())
   .use(function (req, res, next) {
     // Any non-oauth request will continue down the default middlewares
-    if (req.url.split('/')[1] !== '_oauth')
+    if (req.url.split('/')[1] !== '_oauth') {
       next();
+      return;
+    }
+
+    Meteor._debug('Incoming OAuth request', req.url, req.query);
 
     if (!Meteor._facebook)
       throw new Error("Need to call Meteor.setupFacebook first");
@@ -39,9 +43,12 @@ __meteor_bootstrap__.app
     var future = Meteor._oauthFutures[req.query.state];
     if (future) {
       // Unblock the `login` call
+      Meteor._debug("We were expecting you, OAuth request.");
       future.return(Meteor._handleOauthRequest(req));
     } else {
       // Store this request. We expect to soon get a call to `login`
+      Meteor._debug("We weren't expecting you, but that's fine. "
+                    + "We'll expect the call to login instead.");
       Meteor._unmatchedOauthRequests[req.query.state] = req;
     }
   });
@@ -103,7 +110,6 @@ Meteor.methods({
         throw new Meteor.Error("Couldn't find login token");
       this.setUserId(loginToken.userId);
 
-      // XXX do we need to actually return this here?
       return {
         token: loginToken,
         id: this.userId()
@@ -111,6 +117,10 @@ Meteor.methods({
     } else {
       throw new Error("Neither oauth nor resume in options");
     }
+  },
+
+  logout: function() {
+    this.setUserId(null);
   }
 });
 

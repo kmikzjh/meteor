@@ -255,7 +255,7 @@ h3 {
     width: 80px;
 }
 
-#fb-login {
+#fb-login, #logout {
     cursor: pointer;
     margin: 5px 10px 5px 5px;
     padding: 2px 7px;

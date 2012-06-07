@@ -26,6 +26,9 @@ Handlebars.json_ast_to_func = function (ast) {
 // inverse) as just another kind of argument, same as what is passed
 // in via named arguments.
 Handlebars._default_helpers = {
+  'user': function (data, options) {
+    return Meteor.user();
+  },
   'with': function (data, options) {
     return options.fn(data);
   },

@@ -18,6 +18,37 @@ var openCenteredPopup = function(url, width, height) {
 };
 // End copied code
 
+Meteor.user = function () {
+  if (Meteor.default_connection.userId()) {
+    // XXX full identity?
+    return {_id: Meteor.default_connection.userId()};
+  } else {
+    return null;
+  }
+};
+
+Meteor.loginFromLocalStorage = function () {
+  var loginToken = localStorage.getItem("Meteor.loginToken");
+  if (loginToken) {
+    Meteor.apply('login', [{resume: loginToken}], {wait: true}, function(error, result) {
+      if (error) {
+        Meteor._debug("Server error on login", error);
+        return;
+      }
+
+      Meteor.default_connection.setUserId(result.id);
+      Meteor.default_connection.onReconnect = function() {
+        Meteor.apply('login', [{resume: loginToken}], {wait: true}, function(error, result) {
+          if (error) {
+            Meteor._debug("Server error on login", error);
+            return;
+          }
+        });
+      };
+    });
+  }
+};
+
 Meteor.loginWithFacebook = function () {
   if (!Meteor._facebook)
     throw new Error("Need to call Meteor.setupFacebook first");
@@ -33,9 +64,34 @@ Meteor.loginWithFacebook = function () {
   Meteor.apply('login', [
     {oauth: {version: 2, provider: 'facebook', state: oauthState}}
   ], {wait: true}, function(error, result) {
+    if (error) {
+      Meteor._debug("Server error on login", error);
+      return;
+    }
+
+    localStorage.setItem("Meteor.loginToken", result.token);
     Meteor.default_connection.setUserId(result.id);
     Meteor.default_connection.onReconnect = function() {
-      Meteor.apply('login', [{resume: result.token}], {wait: true});
+      Meteor.apply('login', [{resume: result.token}], {wait: true}, function(error, result) {
+        if (error) {
+          Meteor._debug("Server error on login", error);
+          return;
+        }
+      });
     };
+  });
+};
+
+Meteor.logout = function () {
+  // xcxc should this be in the callback?
+  Meteor.apply('logout', [], {wait: true}, function(error, result) {
+    if (error) {
+      Meteor._debug("Server error on logout", error);
+      return;
+    }
+
+    localStorage.setItem("Meteor.loginToken", null);
+    Meteor.default_connection.setUserId(null);
+    Meteor.default_connection.onReconnect = null;
   });
 };
