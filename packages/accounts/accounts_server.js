@@ -56,7 +56,7 @@
       var updateOrCreateUser = function(email, fbId, fbAccessToken) {
         var userByEmail = Meteor.users.findOne({emails: email});
         if (userByEmail) {
-          var user = userIfExists;
+          var user = userByEmail;
           if (!users.services || !users.services.facebook)
             Meteor.users.update(user, {$set: {"services.facebook": {
               id: fbId,
