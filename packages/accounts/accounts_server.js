@@ -57,7 +57,7 @@
         var userByEmail = Meteor.users.findOne({emails: email});
         if (userByEmail) {
           var user = userByEmail;
-          if (!users.services || !users.services.facebook)
+          if (!user.services || !user.services.facebook)
             Meteor.users.update(user, {$set: {"services.facebook": {
               id: fbId,
               accessToken: fbAccessToken
