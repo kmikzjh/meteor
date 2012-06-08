@@ -1,9 +1,16 @@
-users = new Meteor.Collection("users");
-loginTokens = new Meteor.Collection("loginTokens");
+Meteor.users = new Meteor.Collection("users");
 
-Meteor.setupFacebook = function(appId, appUrl) {
-  Meteor._facebook = {
-    appId: appId,
-    appUrl: appUrl
-  };
+if (!Meteor.accounts) {
+  Meteor.accounts = {};
+}
+
+if (!Meteor.accounts.facebook) {
+  Meteor.accounts.facebook = {};
+}
+
+Meteor.accounts._loginTokens = new Meteor.Collection("accounts._loginTokens");
+
+Meteor.accounts.facebook.setup = function(appId, appUrl) {
+  Meteor.accounts.facebook._appId = appId;
+  Meteor.accounts.facebook._appUrl = appUrl;
 };

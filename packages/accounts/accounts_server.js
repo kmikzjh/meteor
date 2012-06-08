@@ -1,132 +1,155 @@
-var connect = __meteor_bootstrap__.require("connect");
+(function() {
 
-// A map from oauth "state"s to `Future`s on which calling `return`
-// will unblock the corresponding outstanding call to `login`
-Meteor._oauthFutures = {};
+  var connect = __meteor_bootstrap__.require("connect");
 
-// A map from oauth "state"s to incoming requests that, when processed,
-// had no matching future (presumably because the login popup window
-// finished its work before the server executed the call to `login`)
-Meteor._unmatchedOauthRequests = {};
+  // A map from oauth "state"s to `Future`s on which calling `return`
+  // will unblock the corresponding outstanding call to `login`
+  var oauthFutures = {};
 
-// XXX add test for supporting both: first receving the oauth request
-// and then executing call to `login`; and vice versa
+  // A map from oauth "state"s to incoming requests that, when processed,
+  // had no matching future (presumably because the login popup window
+  // finished its work before the server executed the call to `login`)
+  var unmatchedOauthRequests = {};
 
-Meteor.setupFacebookSecret = function(secret) {
-  Meteor._facebookSecret = secret;
-};
+  // XXX add test for supporting both: first receiving the oauth request
+  // and then executing call to `login`; and vice versa
 
-// Listen on /_oauth/*
-__meteor_bootstrap__.app
-  .use(connect.query())
-  .use(function (req, res, next) {
-    // Any non-oauth request will continue down the default middlewares
-    if (req.url.split('/')[1] !== '_oauth')
-      next();
+  Meteor.accounts.facebook.setSecret = function(secret) {
+    Meteor.accounts.facebook._secret = secret;
+  };
 
-    if (!Meteor._facebook)
-      throw new Error("Need to call Meteor.setupFacebook first");
-    if (!Meteor._facebookSecret)
-      throw new Error("Need to call Meteor.setupFacebookSecret first");
+  // Listen on /_oauth/*
+  __meteor_bootstrap__.app
+    .use(connect.query())
+    .use(function (req, res, next) {
+      Fiber(function() {
+        // Any non-oauth request will continue down the default middlewares
+        if (req.url.split('/')[1] !== '_oauth')
+          next();
 
-    // Close the popup window
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    var content =
-          '<html><head><script>window.close()</script></head></html>';
-    res.end(content, 'utf-8');
+        if (!Meteor.accounts.facebook._appId || !Meteor.accounts.facebook._appUrl)
+          throw new Error("Need to call Meteor.accounts.facebook.setup first");
+        if (!Meteor.accounts.facebook._secret)
+          throw new Error("Need to call Meteor.accounts.facebook.setSecret first");
 
-    // Try to unblock the appropriate call to `login`
-    var future = Meteor._oauthFutures[req.query.state];
-    if (future) {
-      // Unblock the `login` call
-      future.return(Meteor._handleOauthRequest(req));
-    } else {
-      // Store this request. We expect to soon get a call to `login`
-      Meteor._unmatchedOauthRequests[req.query.state] = req;
+        // Close the popup window
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        var content =
+              '<html><head><script>window.close()</script></head></html>';
+        res.end(content, 'utf-8');
+
+        // Try to unblock the appropriate call to `login`
+        var future = oauthFutures[req.query.state];
+        if (future) {
+          // Unblock the `login` call
+          future.return(handleOauthRequest(req));
+        } else {
+          // Store this request. We expect to soon get a call to `login`
+          unmatchedOauthRequests[req.query.state] = req;
+        }
+      }).run();
+    });
+
+  Meteor.methods({
+    login: function(options) {
+      // XXX write test for updateOrCreateUser
+      var updateOrCreateUser = function(email, fbId, fbAccessToken) {
+        var userByEmail = Meteor.users.findOne({emails: email});
+        if (userByEmail) {
+          var user = userIfExists;
+          if (!users.services || !users.services.facebook)
+            Meteor.users.update(user, {$set: {"services.facebook": {
+              id: fbId,
+              accessToken: fbAccessToken
+            }}});
+          return user._id;
+        } else {
+          var userByFacebookId = Meteor.users.findOne({"services.facebook.id": fbId});
+          if (userByFacebookId) {
+            var user = userByFacebookId;
+            if (user.emails.indexOf(email) === -1) {
+              // The user may have changed the email address associated with
+              // their facebook account.
+              Meteor.users.update(user, {$push: {emails: email}});
+            }
+            return user._id;
+          } else {
+            return Meteor.users.insert({
+              emails: [email],
+              services: {
+                facebook: {id: fbId, accessToken: fbAccessToken}
+              }
+            });
+          }
+        }
+      };
+
+      if (options.oauth) {
+        if (options.oauth.version !== 2 || options.oauth.provider !== 'facebook')
+          throw new Error("We only support facebook login for now. More soon!");
+
+        var fbAccessToken;
+        if (unmatchedOauthRequests[options.oauth.state]) {
+          // We had previously received the HTTP request with the OAuth code
+          fbAccessToken = handleOauthRequest(
+            unmatchedOauthRequests[options.oauth.state]);
+          delete unmatchedOauthRequests[options.oauth.state];
+        } else {
+          if (oauthFutures[options.oauth.state])
+            throw new Error("STRANGE! We are trying to set up a future for this OAuth state twice " +
+                            "(this could happen if one calls login twice without waiting). " +
+                            options.oauth.state);
+
+          // Prepare Future that will be `return`ed when we get an incoming
+          // HTTP request with the OAuth code
+          oauthFutures[options.oauth.state] = new Future;
+          fbAccessToken = oauthFutures[options.oauth.state].wait();
+          delete oauthFutures[options.oauth.state];
+        }
+
+        // Fetch user's facebook identity
+        var identity = Meteor.http.get(
+          "https://graph.facebook.com/me?access_token=" + fbAccessToken).data;
+        this.setUserId(updateOrCreateUser(identity.email, identity.id, fbAccessToken));
+
+        // Generate and store a login token for reconnect
+        var loginToken = Meteor.accounts._loginTokens.insert({
+          userId: this.userId()
+        });
+
+        return {
+          token: loginToken,
+          id: this.userId()
+        };
+      } else if (options.resume) {
+        var loginToken = Meteor.accounts._loginTokens.findOne({_id: options.resume});
+        if (!loginToken)
+          throw new Meteor.Error("Couldn't find login token");
+        this.setUserId(loginToken.userId);
+
+        // XXX do we need to actually return this here?
+        return {
+          token: loginToken,
+          id: this.userId()
+        };
+      } else {
+        throw new Error("Unrecognized options for login request");
+      }
     }
   });
 
-Meteor.methods({
-  login: function(options) {
-    var findOrCreateUser = function(email, identity) {
-      var userIfExists = users.findOne({emails: email});
-      if (userIfExists) {
-        return userIfExists._id;
-      } else {
-        // XXX how do we deal with people changing their facebook email
-        // addresses? We should probably create users based on facebook id
-        // instead.
-        return users.insert({emails: [email], identity: identity});
-      }
-    };
-
-    if (options.oauth) {
-      if (options.oauth.version !== 2 || options.oauth.provider !== 'facebook')
-        throw new Error("We only support facebook login for now. More soon!");
-
-      var fbAccessToken;
-      if (Meteor._unmatchedOauthRequests[options.oauth.state]) {
-        // We had previously received the HTTP request with the OAuth code
-        fbAccessToken = Meteor._handleOauthRequest(
-          Meteor._unmatchedOauthRequests[options.oauth.state]);
-        delete Meteor._unmatchedOauthRequests[options.oauth.state];
-      } else {
-        if (Meteor._oauthFutures[options.oauth.state])
-          throw new Error("How can we already have a future set up for " +
-                          options.oauth.state + "?");
-
-        // Prepare Future that will be `return`ed when we get an incoming
-        // HTTP request with the OAuth code
-        Meteor._oauthFutures[options.oauth.state] = new Future;
-        fbAccessToken = Meteor._oauthFutures[options.oauth.state].wait();
-        delete Meteor._oauthFutures[options.oauth.state];
-      }
-
-      // Fetch user's facebook identity
-      var identity = Meteor.http.get(
-        "https://graph.facebook.com/me?access_token=" + fbAccessToken).data;
-      this.setUserId(findOrCreateUser(identity.email));
-
-      // Generate and store a login token for reconnect
-      var loginToken = loginTokens.insert({
-        fbAccessToken: fbAccessToken,
-        userId: this.userId()
-      });
-
-      return {
-        token: loginToken,
-        id: this.userId()
-      };
-    } else if (options.resume) {
-      var loginToken = loginTokens.findOne({_id: options.resume});
-      if (!loginToken)
-        throw new Meteor.Error("Couldn't find login token");
-      this.setUserId(loginToken.userId);
-
-      // XXX do we need to actually return this here?
-      return {
-        token: loginToken,
-        id: this.userId()
-      };
-    } else {
-      throw new Error("Neither oauth nor resume in options");
-    }
-  }
-});
-
-// @returns {String} Facebook access token
-Meteor._handleOauthRequest = function(req) {
-  var bareUrl = req.url.substring(0, req.url.indexOf('?'));
-  var provider = bareUrl.split('/')[2];
-  if (provider === 'facebook') {
-    Fiber(function() {
+  // @returns {String} Facebook access token
+  var handleOauthRequest = function(req) {
+    var bareUrl = req.url.substring(0, req.url.indexOf('?'));
+    var provider = bareUrl.split('/')[2];
+    if (provider === 'facebook') {
       // Request an access token
       var response = Meteor.http.get(
         "https://graph.facebook.com/oauth/access_token?" +
-          "client_id=" + Meteor._facebook.appId +
+          "client_id=" + Meteor.accounts.facebook._appId +
           // XXX what does this redirect_uri even mean?
-          "&redirect_uri=" + Meteor._facebook.appUrl + "/_oauth/facebook" +
-          "&client_secret=" + Meteor._facebookSecret +
+          "&redirect_uri=" + Meteor.accounts.facebook._appUrl + "/_oauth/facebook" +
+          "&client_secret=" + Meteor.accounts.facebook._secret +
           "&code=" + req.query.code).content;
 
       // Extract the facebook access token from the response
@@ -139,10 +162,9 @@ Meteor._handleOauthRequest = function(req) {
       });
 
       return fbAccessToken;
-    }).run();
-  } else {
-    throw new Error("Unknown OAuth provider: " + provider);
-  }
-};
-
+    } else {
+      throw new Error("Unknown OAuth provider: " + provider);
+    }
+  };
+})();
 

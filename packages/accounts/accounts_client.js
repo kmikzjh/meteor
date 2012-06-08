@@ -1,32 +1,34 @@
-// Copied from http://stackoverflow.com/a/4599967
-var newwindow;
-var openCenteredPopup = function(url, width, height) {
-  var screenX     = typeof window.screenX != 'undefined' ? window.screenX : window.screenLeft,
-      screenY     = typeof window.screenY != 'undefined' ? window.screenY : window.screenTop,
-      outerWidth  = typeof window.outerWidth != 'undefined' ? window.outerWidth : document.body.clientWidth,
-      outerHeight = typeof window.outerHeight != 'undefined' ? window.outerHeight : (document.body.clientHeight - 22),
-      left        = parseInt(screenX + ((outerWidth - width) / 2), 10),
-      top         = parseInt(screenY + ((outerHeight - height) / 2.5), 10),
-      features    = ('width=' + width + ',height=' + height + ',left=' + left + ',top=' + top);
-
-  newwindow = window.open(url, 'Login', features);
-
-  if (window.focus)
-    newwindow.focus();
-
-  return false;
-};
-// End copied code
-
 Meteor.loginWithFacebook = function () {
-  if (!Meteor._facebook)
-    throw new Error("Need to call Meteor.setupFacebook first");
+  var openCenteredPopup = function(url, width, height) {
+    var screenX = typeof window.screenX !== 'undefined'
+          ? window.screenX : window.screenLeft;
+    var screenY = typeof window.screenY !== 'undefined'
+          ? window.screenY : window.screenTop;
+    var outerWidth = typeof window.outerWidth !== 'undefined'
+          ? window.outerWidth : document.body.clientWidth;
+    var outerHeight = typeof window.outerHeight !== 'undefined'
+          ? window.outerHeight : (document.body.clientHeight - 22);
+
+    // Use `outerWidth - width` and `outerHeight - height` for help in
+    // positioning the popup centered relative to the current window
+    var left = screenX + (outerWidth - width) / 2;
+    var top = screenY + (outerHeight - height) / 2;
+    var features = ('width=' + width + ',height=' + height +
+                    ',left=' + left + ',top=' + top);
+
+    var newwindow = window.open(url, 'Login', features);
+    if (newwindow.focus)
+      newwindow.focus();
+  };
+
+  if (!Meteor.accounts.facebook._appId || !Meteor.accounts.facebook._appUrl)
+    throw new Error("Need to call Meteor.accounts.facebook.setup first");
 
   var oauthState = Meteor.uuid();
 
   openCenteredPopup(
-    'https://www.facebook.com/dialog/oauth?client_id=' + Meteor._facebook.appId +
-      '&redirect_uri=' + Meteor._facebook.appUrl + '/_oauth/facebook' +
+    'https://www.facebook.com/dialog/oauth?client_id=' + Meteor.accounts.facebook._appId +
+      '&redirect_uri=' + Meteor.accounts.facebook._appUrl + '/_oauth/facebook' +
       '&scope=email&state=' + oauthState,
     1000, 600); // XXX should we use different dimensions, e.g. on mobile?
 
